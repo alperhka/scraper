@@ -3,11 +3,30 @@ import sys
 import re
 import requests
 import hashlib
+import logging
 from datetime import datetime
 from dotenv import load_dotenv
 from supabase import create_client, Client
 
-# 1. Konfiguration
+# 1. Logging konfigurieren
+os.makedirs("logs", exist_ok=True)
+logger = logging.getLogger("eventbrite_scraper")
+logger.setLevel(logging.INFO)
+
+# Formatter für Zeitstempel, Log-Level und Nachricht
+formatter = logging.Formatter('%(asctime)s - %(levelname)s - %(message)s', datefmt='%Y-%m-%d %H:%M:%S')
+
+# Console Handler (Ausgabe auf den Bildschirm)
+console_handler = logging.StreamHandler(sys.stdout)
+console_handler.setFormatter(formatter)
+logger.addHandler(console_handler)
+
+# File Handler (Ausgabe in logs/eventbrite.log)
+file_handler = logging.FileHandler("logs/eventbrite.log", encoding="utf-8")
+file_handler.setFormatter(formatter)
+logger.addHandler(file_handler)
+
+# 2. Konfiguration
 load_dotenv()
 
 EVENTBRITE_TOKEN = os.getenv("EVENTBRITE_TOKEN") or "L4F75VCJ24SNNDDD2CRI"
@@ -22,7 +41,7 @@ if not SUPABASE_KEY or SUPABASE_KEY.startswith("sb_"):
 try:
     supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
 except Exception as e:
-    print(f"Fehler bei Supabase Init: {e}")
+    logger.error(f"Fehler bei Supabase Init: {e}")
     supabase = None
 
 def get_event_details(event_id: str):
@@ -30,12 +49,12 @@ def get_event_details(event_id: str):
     # Wir expandieren 'venue' und 'organizer', um echte Adress- und Veranstalterdaten zu erhalten
     url = f"https://www.eventbriteapi.com/v3/events/{event_id}/?token={EVENTBRITE_TOKEN}&expand=venue,organizer"
     
-    print(f"\n--- Schritt 1: Eventbrite API Call ---")
-    print(f"📡 Rufe Event-ID {event_id} ab...")
+    logger.info("--- Schritt 1: Eventbrite API Call ---")
+    logger.info(f"📡 Rufe Event-ID {event_id} ab...")
     response = requests.get(url)
     
     if response.status_code != 200:
-        print(f"❌ Fehler beim Abruf von Eventbrite: {response.status_code}")
+        logger.error(f"❌ Fehler beim Abruf von Eventbrite: {response.status_code}")
         return None
         
     return response.json()
@@ -53,10 +72,10 @@ def assign_tags(title: str, description: str) -> list:
     text = f"{title} {description}".lower()
     found_tags = []
     for category, keywords in TAG_CATEGORIES.items():
-        for word in keywords:
-            if word.lower() in text:
-                found_tags.append(category)
-                break
+      for word in keywords:
+        if word.lower() in text:
+          found_tags.append(category)
+          break
     return found_tags if found_tags else ["Bildung & Wissenschaft"]
 
 def save_to_supabase(event_data: dict):
@@ -68,7 +87,7 @@ def save_to_supabase(event_data: dict):
 
     # --- NEU: Automatische Tags ---
     tags = assign_tags(title, description)
-    print(f"🏷️  Automatisch zugewiesene Tags: {tags}")
+    logger.info(f"🏷️  Automatisch zugewiesene Tags: {tags}")
 
     # --- DYNAMISCH: Location (Veranstaltungsort) auslesen ---
     venue = event_data.get("venue")
@@ -89,9 +108,9 @@ def save_to_supabase(event_data: dict):
     # --- DYNAMISCH: Organizer (Veranstalter) auslesen ---
     organizer = event_data.get("organizer", {}).get("name") or "materialkreislauf."
 
-    print(f"📍 Ort: {location_name} ({city})")
-    print(f"🏠 Adresse: {address}")
-    print(f"👥 Veranstalter: {organizer}")
+    logger.info(f"📍 Ort: {location_name} ({city})")
+    logger.info(f"🏠 Adresse: {address}")
+    logger.info(f"👥 Veranstalter: {organizer}")
 
     hash_input = f"{title}{start_at}{url}"
     source_hash = hashlib.md5(hash_input.encode()).hexdigest()
@@ -111,22 +130,21 @@ def save_to_supabase(event_data: dict):
         "tags": tags # Die neuen schlauen Tags
     }
 
-
     try:
         if supabase:
             supabase.table("events_all").upsert(prepared_event, on_conflict="source_hash").execute()
-            print(f"✅ Erfolgreich in Datenbank gespeichert: {title}")
+            logger.info(f"✅ Erfolgreich in Datenbank gespeichert: {title}")
         else:
-            print("⚠️ Supabase konnte nicht erreicht werden.")
+            logger.warning("⚠️ Supabase konnte nicht erreicht werden.")
     except Exception as e:
-        print(f"⚠️ Fehler beim Speichern in Supabase: {e}")
+        logger.error(f"⚠️ Fehler beim Speichern in Supabase: {e}")
 
 if __name__ == "__main__":
     # Standard Event ID (Sustainability Networking Night)
     EVENT_ID = "1991543100023"
     
-    print("🚀 Eventbrite to Supabase Scraper Command Line Tool")
-    print("=" * 50)
+    logger.info("🚀 Eventbrite to Supabase Scraper Command Line Tool")
+    logger.info("=" * 50)
     
     if len(sys.argv) > 1:
         user_input = sys.argv[1].strip()
@@ -134,22 +152,22 @@ if __name__ == "__main__":
         id_match = re.search(r'(?:-|tickets-)?(\d{10,15})(?:/|\?|$)', user_input)
         if id_match:
             EVENT_ID = id_match.group(1)
-            print(f"🔍 Extracted Event ID from input: {EVENT_ID}")
+            logger.info(f"🔍 Extracted Event ID from input: {EVENT_ID}")
         else:
             # Fallback to treating input directly as ID if it's numeric
             if user_input.isdigit():
                 EVENT_ID = user_input
-                print(f"🔍 Using input directly as Event ID: {EVENT_ID}")
+                logger.info(f"🔍 Using input directly as Event ID: {EVENT_ID}")
             else:
-                print(f"⚠️  Could not parse Event ID from: {user_input}")
-                print(f"👉 Falling back to default Event ID: {EVENT_ID}")
+                logger.warning(f"⚠️  Could not parse Event ID from: {user_input}")
+                logger.info(f"👉 Falling back to default Event ID: {EVENT_ID}")
     else:
-        print("💡 Usage: python3 eventbrite_to_supabase.py <Eventbrite_URL_or_ID>")
-        print(f"👉 No arguments provided. Using default Event ID: {EVENT_ID}")
+        logger.info("💡 Usage: python3 eventbrite_to_supabase.py <Eventbrite_URL_or_ID>")
+        logger.info(f"👉 No arguments provided. Using default Event ID: {EVENT_ID}")
     
     data = get_event_details(EVENT_ID)
     if data:
         save_to_supabase(data)
     else:
-        print("❌ Scraping failed.")
-    print("=" * 50)
+        logger.error("❌ Scraping failed.")
+    logger.info("=" * 50)
