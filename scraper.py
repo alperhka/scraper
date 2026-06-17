@@ -1,41 +1,86 @@
 import os
 import json
-import re
 import hashlib
 from datetime import datetime
+from typing import List, Dict, Any
 from dotenv import load_dotenv
 from firecrawl import FirecrawlApp
 from supabase import create_client, Client
 
-# Load environment variables from .env file
+# Load environment variables
 load_dotenv()
 
-# Initialize API keys and URLs from environment variables
 FIRECRAWL_KEY = os.getenv("FIRECRAWL_KEY")
 SUPABASE_URL = os.getenv("SUPABASE_URL")
 SUPABASE_KEY = os.getenv("SUPABASE_KEY")
 
-# Validate that all required environment variables are set
-if not all([FIRECRAWL_KEY, SUPABASE_URL, SUPABASE_KEY]):
-    print("⚠️  Warning: Some environment variables are missing")
-    if not FIRECRAWL_KEY:
-        raise ValueError("FIRECRAWL_KEY is required!")
-    else:
-        print("Continuing with Firecrawl only (Supabase will be skipped)")
-
-# Initialize Firecrawl client
+# Initialize Clients
 firecrawl_app = FirecrawlApp(api_key=FIRECRAWL_KEY)
-
-# Initialize Supabase client (with error handling)
 try:
     supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
-    print("✓ Supabase connection established")
 except Exception as e:
-    print(f"⚠️  Supabase connection failed: {e}")
-    print("Continuing without Supabase (dry-run mode)...")
+    print(f"⚠️  Supabase not connected: {e}")
     supabase = None
 
-# JSON Schema for Firecrawl Extract
+# Tag Categories Dictionary
+TAG_CATEGORIES = {
+    "Politik & Demokratie": [
+        "Parteiveranstaltung", "Podiumsdiskussion", "Kommunalpolitik", "Bürgertreff",
+        "politisch", "wahl", "demokratie", "regierung", "parlament", "bundestag", "landtag",
+        "spd", "grüne", "fdp", "cdu", "csu", "linke", "afd"
+    ],
+    "Umwelt & Klima": [
+        "Nachhaltigkeit", "Energie", "Tierschutz", "Mobilität",
+        "klima", "umwelt", "co2", "kohlenstoff", "erneuerbar", "öko", "grün",
+        "wald", "wasser", "luft", "verkehr", "auto", "fahrrad", "öffentlich"
+    ],
+    "Bildung & Wissenschaft": [
+        "Vortrag", "Workshop", "Künstliche Intelligenz", "Ethik",
+        "bildung", "wissenschaft", "forschung", "universität", "schule", "training",
+        "seminar", "kurs", "ki", "ai", "technologie", "innovation", "kultur"
+    ],
+    "Gesellschaft & Soziales": [
+        "Antidiskriminierung", "Integration", "Ehrenamt", "Menschenrechte",
+        "sozial", "gesellschaft", "recht", "diskriminierung", "rechte", "integration",
+        "migration", "flucht", "hilfe", "unterstützung", "gemeinde", "netzwerk"
+    ],
+    "Kultur & Protest": [
+        "Politische Kunst", "Lesung", "Demonstration", "Filmabend",
+        "kultur", "kunst", "musik", "film", "theater", "ausstellung", "lesung",
+        "protest", "demonstration", "aktivismus", "aktion", "kampagne"
+    ]
+}
+
+def assign_tags(title: str, description: str, organizer: str) -> List[str]:
+    """
+    Assigns relevant tags to an event based on title, description, and organizer.
+    Returns a list of matching category tags.
+    """
+    text_to_analyze = f"{title} {description} {organizer}".lower()
+    assigned_tags = []
+    
+    for category, keywords in TAG_CATEGORIES.items():
+        for keyword in keywords:
+            if keyword.lower() in text_to_analyze:
+                assigned_tags.append(category)
+                break  # Only add category once per event
+    
+    # If no tags were assigned, default to "Bildung & Wissenschaft"
+    if not assigned_tags:
+        assigned_tags.append("Bildung & Wissenschaft")
+    
+    return assigned_tags
+
+# New URLs to scrape
+NEW_SOURCES = [
+    {"name": "SPD Bund", "url": "https://www.spd.de/service/#m75572"},
+    {"name": "Bündnis 90/Die Grünen Bund", "url": "https://www.gruene.de/termine"},
+    {"name": "FDP Bund", "url": "https://www.fdp.de/termine"},
+    {"name": "Friedrich-Ebert-Stiftung", "url": "https://www.fes.de/veranstaltungen"},
+    {"name": "Amnesty Deutschland", "url": "https://www.amnesty.de/termine"}
+]
+
+# JSON Schema for AI-powered extraction
 EVENT_SCHEMA = {
     "type": "object",
     "properties": {
@@ -44,272 +89,84 @@ EVENT_SCHEMA = {
             "items": {
                 "type": "object",
                 "properties": {
-                    "title": {
-                        "type": "string",
-                        "description": "Title or name of the event"
-                    },
-                    "event_date": {
-                        "type": "string",
-                        "description": "Date and time in format YYYY-MM-DD HH:MM"
-                    },
-                    "location": {
-                        "type": "string",
-                        "description": "Location or venue of the event"
-                    },
-                    "description": {
-                        "type": "string",
-                        "description": "Description of the event"
-                    }
+                    "title": {"type": "string", "description": "Title of the event"},
+                    "date": {"type": "string", "description": "Date and time (e.g. YYYY-MM-DD HH:MM)"},
+                    "location": {"type": "string", "description": "Venue or city"},
+                    "description": {"type": "string", "description": "Short summary"}
                 },
-                "required": ["title"]
+                "required": ["title", "date"]
             }
         }
     }
 }
 
-
-def parse_events_from_markdown(markdown_content: str) -> list[dict]:
-    """
-    Parse events from markdown content extracted from the website.
-    
-    Args:
-        markdown_content (str): The markdown content from Firecrawl
-        
-    Returns:
-        list[dict]: List of parsed events
-    """
-    events = []
-    
-    # German month names
-    month_map = {
-        'januar': 1, 'februar': 2, 'märz': 3, 'april': 4,
-        'mai': 5, 'juni': 6, 'juli': 7, 'august': 8,
-        'september': 9, 'oktober': 10, 'november': 11, 'dezember': 12
-    }
-    
-    lines = markdown_content.split('\n')
-    
-    current_event = None
-    for i, line in enumerate(lines):
-        # Match date pattern: **Dienstag, DD. Monat YYYY, HH:MM Uhr - HH:MM Uhr**
-        date_match = re.search(
-            r'\*\*(\w+,\s+(\d{1,2})\.\s+(\w+)\s+(\d{4})),\s+(\d{2}):(\d{2})\s+Uhr',
-            line
-        )
-        
-        if date_match:
-            # Save previous event if exists
-            if current_event and current_event.get('title'):
-                events.append(current_event)
-            
-            day = int(date_match.group(2))
-            month_str = date_match.group(3).lower()
-            year = int(date_match.group(4))
-            hour = int(date_match.group(5))
-            minute = int(date_match.group(6))
-            
-            # Convert month name to number
-            month = month_map.get(month_str, 1)
-            
-            # Format as ISO datetime
-            try:
-                dt = datetime(year, month, day, hour, minute)
-                start_at = dt.isoformat()
-            except ValueError:
-                start_at = None
-            
-            current_event = {
-                'title': '',
-                'event_date': date_match.group(1),  # Store original date string too
-                'start_at': start_at,
-                'location': '',
-                'description': ''
-            }
-        
-        # Match event title (line starting with ###)
-        elif line.startswith('### ') and current_event is not None:
-            current_event['title'] = line.replace('### ', '').strip()
-        
-        # Match location (line with - and address)
-        elif ' - ' in line and current_event is not None and not current_event['location']:
-            # Look for venue name and address pattern
-            parts = line.split(' - ')
-            if len(parts) >= 2:
-                venue = parts[0].strip().replace('**', '').replace('\\', '')
-                address = parts[1].strip().replace('\\', '')
-                current_event['location'] = f"{venue}, {address}"
-        
-        # Add description
-        elif current_event is not None and line.strip() and not line.startswith('#'):
-            if not current_event['description'] and not line.startswith('**'):
-                current_event['description'] = line.strip()
-            elif not line.startswith('**') and current_event['description']:
-                # Append to description if not already set
-                pass
-    
-    # Add the last event if exists
-    if current_event and current_event.get('title'):
-        events.append(current_event)
-    
-    return events
-
-
-def scrape_political_events(url: str) -> list[dict]:
-    """
-    Scrape political events from the given URL using Firecrawl.
-
-    Args:
-        url (str): The URL to scrape (e.g., https://spd-tuebingen.de/)
-
-    Returns:
-        list[dict]: A list of extracted events
-    """
+def scrape_with_ai(source: Dict[str, str]) -> List[Dict[str, Any]]:
+    """Uses Firecrawl's AI to extract events from any website structure."""
+    print(f"\n🔍 Scrape: {source['name']} ({source['url']})")
     try:
-        print(f"Starting to scrape events from: {url}")
-
-        # Use Firecrawl's scrape with markdown
-        response = firecrawl_app.scrape(
-            url,
-            formats=["markdown"]
-        )
-
-        print(f"Firecrawl response type: {type(response)}")
+        response = firecrawl_app.extract([source['url']], schema=EVENT_SCHEMA)
         
-        # The response is a Document object with markdown attribute
-        if hasattr(response, 'markdown') and response.markdown:
-            markdown_content = response.markdown
-            print(f"✓ Scraped {len(markdown_content)} chars of markdown")
-            
-            # Parse events from markdown
-            events = parse_events_from_markdown(markdown_content)
-            print(f"Found {len(events)} events")
+        # Access data attribute of the response object
+        if hasattr(response, 'data') and response.data:
+            events = response.data.get('events', [])
+            print(f"✅ Found {len(events)} events")
             return events
         
-        print("No markdown content found in the response")
-        return []
+        # Fallback for dict response
+        if isinstance(response, dict) and 'data' in response:
+            events = response['data'].get('events', [])
+            print(f"✅ Found {len(events)} events")
+            return events
 
+        print(f"⚠️  No structured data extracted from {source['name']}")
+        return []
     except Exception as e:
-        print(f"Error during scraping: {e}")
-        import traceback
-        traceback.print_exc()
-        # Fallback: return empty list instead of crashing
+        print(f"❌ Error at {source['name']}: {e}")
         return []
 
+def process_and_save(raw_events: List[Dict], source: Dict[str, str]):
+    """Prepares and saves events to Supabase."""
+    prepared = []
+    for ev in raw_events:
+        hash_input = f"{ev.get('title', '')}{ev.get('date', '')}{source['url']}"
+        source_hash = hashlib.md5(hash_input.encode()).hexdigest()
+        
+        # Assign tags based on event content
+        tags = assign_tags(
+            ev.get("title", ""),
+            ev.get("description", ""),
+            source["name"]
+        )
 
-def prepare_event_data(events: list[dict], page_url: str) -> list[dict]:
-    """
-    Prepare event data for insertion into Supabase events_all table.
-
-    Args:
-        events (list[dict]): List of raw events from Firecrawl
-        page_url (str): The URL of the page being scraped
-
-    Returns:
-        list[dict]: List of events formatted for Supabase insertion
-    """
-    prepared_events = []
-
-    for event in events:
-        # Create a hash for deduplication
-        event_hash = hashlib.md5(
-            f"{event.get('title', '')}{event.get('start_at', '')}".encode()
-        ).hexdigest()
-
-        prepared_event = {
-            "title": event.get("title", ""),
-            "description": event.get("description", ""),
-            "start_at": event.get("start_at"),  # ISO format datetime
-            "end_at": None,  # Not available from basic scraping
-            "location_name": event.get("location", "").split(',')[0] if event.get("location") else "",
-            "address": event.get("location", ""),
-            "city": "Tübingen",  # Default city
-            "postal_code": None,
-            "latitude": None,
-            "longitude": None,
-            "organizer": "SPD Tübingen",  # Default organizer
+        prepared.append({
+            "title": ev.get("title", "Unbenannt"),
+            "start_at": ev.get("date"),
+            "description": ev.get("description", ""),
+            "location_name": ev.get("location", ""),
+            "address": ev.get("location", ""),
+            "organizer": source["name"],
+            "source_url": source["url"],
+            "source_hash": source_hash,
+            "city": "Überregional" if "Bund" in source["name"] else "Tübingen",
             "event_type": "political",
-            "source_name": "SPD Tübingen Website",
-            "source_url": page_url,
-            "image_url": None,
-            "report_count": 0,
-            "is_hidden": False,
-            "source_hash": event_hash
-        }
-        prepared_events.append(prepared_event)
+            "source_name": "Firecrawl AI",
+            "tags": tags
+        })
 
-    return prepared_events
-
-
-def insert_events_into_supabase(events: list[dict]) -> None:
-    """
-    Insert or upsert events into Supabase database, or save locally if not available.
-
-    Args:
-        events (list[dict]): List of events to insert
-    """
-    if not events:
-        print("No events to insert")
-        return
-
-    if not supabase:
-        print(f"Supabase not available. Saving {len(events)} events to JSON file...")
-        save_events_to_file(events)
-        return
-
-    try:
-        print(f"Inserting {len(events)} events into Supabase events_all...")
-
-        # Use upsert to avoid duplicates based on source_hash
-        response = supabase.table("events_all").upsert(
-            events,
-            on_conflict="source_hash"
-        ).execute()
-
-        print(f"✓ Successfully inserted/updated {len(events)} events in Supabase")
-
-    except Exception as e:
-        print(f"⚠️  Error inserting into Supabase: {e}")
-        print(f"Falling back to local JSON file...")
-        save_events_to_file(events)
-
-
-def save_events_to_file(events: list[dict]) -> None:
-    """
-    Save events to a local JSON file.
-    
-    Args:
-        events (list[dict]): List of events to save
-    """
-    try:
-        output_file = "scraped_events.json"
-        with open(output_file, 'w', encoding='utf-8') as f:
-            json.dump(events, f, indent=2, ensure_ascii=False)
-        print(f"✓ Saved {len(events)} events to {output_file}")
-    except Exception as e:
-        print(f"Error saving events to file: {e}")
-
+    if prepared and supabase:
+        try:
+            supabase.table("events_all").upsert(prepared, on_conflict="source_hash").execute()
+            print(f"💾 Saved {len(prepared)} events")
+        except Exception as e:
+            print(f"⚠️  Save error: {e}")
 
 def main():
-    """Main function to orchestrate the scraping process."""
-    try:
-        # Target URL for scraping
-        target_url = "https://spd-tuebingen.de/"
-
-        # Step 1: Scrape events from the URL
-        raw_events = scrape_political_events(target_url)
-
-        # Step 2: Prepare event data for database insertion
-        prepared_events = prepare_event_data(raw_events, target_url)
-
-        # Step 3: Insert events into Supabase
-        insert_events_into_supabase(prepared_events)
-
-        print("✓ Scraping process completed successfully!")
-
-    except Exception as e:
-        print(f"✗ Scraping process failed: {e}")
-        exit(1)
-
+    print("🚀 Starting AI Multi-Scraper")
+    for source in NEW_SOURCES:
+        events = scrape_with_ai(source)
+        if events:
+            process_and_save(events, source)
+    print("\n✨ All done!")
 
 if __name__ == "__main__":
     main()

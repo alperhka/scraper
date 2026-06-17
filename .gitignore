@@ -28,3 +28,7 @@ Thumbs.db
 scraped_events.json
 logs/
 *.log
+
+# Supabase temp
+supabase/.temp/
+
