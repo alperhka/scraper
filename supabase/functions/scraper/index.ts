@@ -31,6 +31,7 @@ interface PreparedEvent {
   report_count: number;
   is_hidden: boolean;
   source_hash: string;
+  tags: string[];
 }
 
 // Parse events from markdown
@@ -151,6 +152,55 @@ async function scrapeEvents(url: string): Promise<ScrapedEvent[]> {
   }
 }
 
+// Tag-Kategorien zur automatischen Zuordnung
+const TAG_CATEGORIES: Record<string, string[]> = {
+  "Politik & Demokratie": [
+    "Parteiveranstaltung", "Podiumsdiskussion", "Kommunalpolitik", "Bürgertreff",
+    "politisch", "wahl", "demokratie", "regierung", "parlament", "bundestag", "landtag",
+    "spd", "grüne", "fdp", "cdu", "csu", "linke", "afd"
+  ],
+  "Umwelt & Klima": [
+    "Nachhaltigkeit", "Energie", "Tierschutz", "Mobilität",
+    "klima", "umwelt", "co2", "kohlenstoff", "erneuerbar", "öko", "grün",
+    "wald", "wasser", "luft", "verkehr", "auto", "fahrrad", "öffentlich"
+  ],
+  "Bildung & Wissenschaft": [
+    "Vortrag", "Workshop", "Künstliche Intelligenz", "Ethik",
+    "bildung", "wissenschaft", "forschung", "universität", "schule", "training",
+    "seminar", "kurs", "ki", "ai", "technologie", "innovation", "kultur"
+  ],
+  "Gesellschaft & Soziales": [
+    "Antidiskriminierung", "Integration", "Ehrenamt", "Menschenrechte",
+    "sozial", "gesellschaft", "recht", "diskriminierung", "rechte", "integration",
+    "migration", "flucht", "hilfe", "unterstützung", "gemeinde", "netzwerk"
+  ],
+  "Kultur & Protest": [
+    "Politische Kunst", "Lesung", "Demonstration", "Filmabend",
+    "kultur", "kunst", "musik", "film", "theater", "ausstellung", "lesung",
+    "protest", "demonstration", "aktivismus", "aktion", "kampagne"
+  ]
+};
+
+function assignTags(title: string, description: string, organizer: string): string[] {
+  const textToAnalyze = `${title} ${description} ${organizer}`.toLowerCase();
+  const assignedTags: string[] = [];
+  
+  for (const [category, keywords] of Object.entries(TAG_CATEGORIES)) {
+    for (const keyword of keywords) {
+      if (textToAnalyze.includes(keyword.toLowerCase())) {
+        assignedTags.push(category);
+        break;
+      }
+    }
+  }
+  
+  if (assignedTags.length === 0) {
+    assignedTags.push("Bildung & Wissenschaft");
+  }
+  
+  return assignedTags;
+}
+
 // Prepare events for Supabase
 function prepareEventData(
   events: ScrapedEvent[],
@@ -173,6 +223,8 @@ function prepareEventData(
     const locationParts = event.location?.split(",") || [];
     const locationName = locationParts[0]?.trim() || "";
 
+    const tags = assignTags(event.title || "", event.description || "", "SPD Tübingen");
+
     return {
       title: event.title || "",
       description: event.description || "",
@@ -192,6 +244,7 @@ function prepareEventData(
       report_count: 0,
       is_hidden: false,
       source_hash: sourceHash,
+      tags: tags,
     };
   });
 }

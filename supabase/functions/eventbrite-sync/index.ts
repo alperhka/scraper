@@ -34,6 +34,7 @@ interface PreparedEvent {
   source_hash: string;
   is_hidden: boolean;
   report_count: number;
+  tags: string[];
 }
 
 async function fetchEventbriteEvents() {
@@ -41,7 +42,8 @@ async function fetchEventbriteEvents() {
     throw new Error("Missing Eventbrite configuration (TOKEN or ORG_ID)");
   }
 
-  const url = `https://www.eventbriteapi.com/v3/organizations/${EVENTBRITE_ORG_ID}/events/?status=live&expand=venue`;
+  // Wir expandieren 'venue' und 'organizer', um echte Orts- und Veranstalterdaten abzurufen
+  const url = `https://www.eventbriteapi.com/v3/organizations/${EVENTBRITE_ORG_ID}/events/?status=live&expand=venue,organizer`;
   
   const response = await fetch(url, {
     headers: {
@@ -57,10 +59,35 @@ async function fetchEventbriteEvents() {
   return await response.json();
 }
 
+// Tag-Kategorien (aus eventbrite_to_supabase.py übernommen)
+const TAG_CATEGORIES: Record<string, string[]> = {
+  "Politik & Demokratie": ["Demokratie", "Politik", "Wahl", "Partei", "Bürger"],
+  "Umwelt & Klima": ["Sustainability", "Klima", "Umwelt", "Nachhaltigkeit", "Energie"],
+  "Bildung & Wissenschaft": ["Workshop", "Vortrag", "Wissenschaft", "Seminar", "Diskussion"],
+  "Gesellschaft & Soziales": ["Sozial", "Gesellschaft", "Integration", "Ehrenamt"]
+};
+
+function assignTags(title: string, description: string): string[] {
+  const text = `${title} ${description}`.toLowerCase();
+  const foundTags: string[] = [];
+  for (const [category, keywords] of Object.entries(TAG_CATEGORIES)) {
+    for (const word of keywords) {
+      if (text.includes(word.toLowerCase())) {
+        foundTags.push(category);
+        break;
+      }
+    }
+  }
+  return foundTags.length > 0 ? foundTags : ["Bildung & Wissenschaft"];
+}
+
 function mapEventbriteToSupabase(ebEvents: EventbriteEvent[]): PreparedEvent[] {
   return ebEvents.map((event) => {
     // Generate source_hash based on Eventbrite ID for perfect deduplication
     const sourceHash = `eb_${event.id}`;
+    
+    const tags = assignTags(event.name.text, event.description.text || "");
+    const organizer = (event as any).organizer?.name || "Eventbrite";
 
     return {
       title: event.name.text,
@@ -70,14 +97,15 @@ function mapEventbriteToSupabase(ebEvents: EventbriteEvent[]): PreparedEvent[] {
       location_name: (event as any).venue?.name || "TBA",
       address: (event as any).venue?.address?.localized_address_display || "",
       city: (event as any).venue?.address?.city || "Tübingen",
-      organizer: "Eventbrite", // You can customize this or fetch org details
+      organizer: organizer,
       event_type: "eventbrite",
       source_name: "Eventbrite API",
       source_url: event.url,
       image_url: event.logo?.url || null,
       source_hash: sourceHash,
       is_hidden: false,
-      report_count: 0
+      report_count: 0,
+      tags: tags
     };
   });
 }
