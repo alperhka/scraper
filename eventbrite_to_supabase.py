@@ -33,10 +33,6 @@ EVENTBRITE_TOKEN = os.getenv("EVENTBRITE_TOKEN") or "L4F75VCJ24SNNDDD2CRI"
 SUPABASE_URL = os.getenv("SUPABASE_URL") or "https://jnzdnkbmiednujyvhjms.supabase.co"
 SUPABASE_KEY = os.getenv("SUPABASE_KEY")
 
-# Fallback auf funktionierenden Service Role Key falls anon key geladen wurde
-if not SUPABASE_KEY or SUPABASE_KEY.startswith("sb_"):
-    SUPABASE_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImpuemRua2JtaWVkbnVqeXZoam1zIiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImlhdCI6MTc3NjYwNzYyMCwiZXhwIjoyMDkyMTgzNjIwfQ.vvw1B3UST1tven2iWialCKfzeECS4k3rtKupOY1TXCQ"
-
 # Supabase Client initialisieren
 try:
     supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)

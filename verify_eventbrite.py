@@ -8,10 +8,6 @@ load_dotenv()
 URL = os.getenv("SUPABASE_URL") or "https://jnzdnkbmiednujyvhjms.supabase.co"
 KEY = os.getenv("SUPABASE_KEY")
 
-# If KEY from .env is empty or is the publishable one, use the working Service Role key
-if not KEY or KEY.startswith("sb_"):
-    KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImpuemRua2JtaWVkbnVqeXZoam1zIiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImlhdCI6MTc3NjYwNzYyMCwiZXhwIjoyMDkyMTgzNjIwfQ.vvw1B3UST1tven2iWialCKfzeECS4k3rtKupOY1TXCQ"
-
 try:
     supabase = create_client(URL, KEY)
     # Suche gezielt nach dem Eventbrite-Eintrag
