@@ -38,7 +38,9 @@ Deno.test("assignTags - Gesellschaft & Soziales - prüft Schlüsselwörter", () 
 });
 
 Deno.test("assignTags - Mehrfachzuweisung von Kategorien", () => {
-  const tags = assignTags("Klimapolitik und Nachhaltigkeit", "Bürger wählen die Zukunft");
+  // Wenn sowohl politische, umweltbezogene als auch soziale Keywords vorkommen
+  const tags = assignTags("Klimapolitik und Ehrenamt", "Bürger wählen die Zukunft");
+  
   assertEquals(tags.includes("Umwelt & Klima"), true);
   assertEquals(tags.includes("Politik & Demokratie"), true);
   assertEquals(tags.includes("Gesellschaft & Soziales"), true);
