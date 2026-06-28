@@ -146,7 +146,8 @@ serve(async (req) => {
         const prepared = mapEventbriteToSupabase(ebEvents);
         allPreparedEvents.push(...prepared);
       } catch (err) {
-        console.warn(`⚠️ Error syncing organizer ${organizerId}:`, err.message);
+        const errMsg = err instanceof Error ? err.message : String(err);
+        console.warn(`⚠️ Error syncing organizer ${organizerId}:`, errMsg);
         // Wir fangen Fehler ab, damit andere Organizer trotzdem synchronisiert werden!
       }
     }
@@ -173,9 +174,10 @@ serve(async (req) => {
       { headers: { "Content-Type": "application/json" } }
     );
   } catch (error) {
-    console.error("❌ Fatal Error:", error.message);
+    const errMsg = error instanceof Error ? error.message : String(error);
+    console.error("❌ Fatal Error:", errMsg);
     return new Response(
-      JSON.stringify({ success: false, error: error.message }),
+      JSON.stringify({ success: false, error: errMsg }),
       { status: 500, headers: { "Content-Type": "application/json" } }
     );
   }
